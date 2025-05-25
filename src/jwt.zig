@@ -9,6 +9,10 @@ const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 const HmacSha384 = std.crypto.auth.hmac.sha2.HmacSha384;
 const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
 
+/// The signing key for a JSON Web Token.
+///
+/// NOTE: Currently only supports the three HMAC signing
+/// algorithms or `none`.
 pub const Key = union(enum) {
     hs256: []const u8,
     hs384: []const u8,
@@ -25,11 +29,14 @@ pub const Key = union(enum) {
     }
 };
 
-pub const Header = struct {
+const Header = struct {
     typ: []const u8,
     alg: []const u8,
 };
 
+/// A handle for the memory allocated for the claim type `T`.
+/// A developer *must* call `deinit()` on the `TokenData`
+/// in order to release the memory allocated for the claim.
 pub fn TokenData(comptime T: type) type {
     return struct {
         claims: T,
@@ -45,7 +52,7 @@ pub fn TokenData(comptime T: type) type {
     };
 }
 
-fn signMessage(allocator: Allocator, message: []const u8, key: Key) ![]u8 {
+fn signMessage(allocator: Allocator, message: []const u8, key: Key) Allocator.Error![]u8 {
     switch (key) {
         .hs256 => |k| {
             var digest: [HmacSha256.mac_length]u8 = undefined;
@@ -66,13 +73,15 @@ fn signMessage(allocator: Allocator, message: []const u8, key: Key) ![]u8 {
     }
 }
 
-fn base64URLEncode(allocator: Allocator, source: []const u8) ![]u8 {
+pub const EncodingError = std.base64.Error || Allocator.Error;
+
+fn base64URLEncode(allocator: Allocator, source: []const u8) EncodingError![]u8 {
     var base64 = std.ArrayList(u8).init(allocator);
     try Base64URL.Encoder.encodeWriter(base64.writer(), source);
     return base64.toOwnedSlice();
 }
 
-fn base64URLDecode(allocator: Allocator, base64: []const u8) ![]u8 {
+fn base64URLDecode(allocator: Allocator, base64: []const u8) EncodingError![]u8 {
     const size = try Base64URL.Decoder.calcSizeForSlice(base64);
     var decoded = try std.ArrayList(u8).initCapacity(allocator, size);
     decoded.expandToCapacity();
@@ -81,7 +90,21 @@ fn base64URLDecode(allocator: Allocator, base64: []const u8) ![]u8 {
     return decoded.toOwnedSlice();
 }
 
-pub fn encode(allocator: Allocator, claims: anytype, key: Key) ![]u8 {
+/// Encodes `claims` into a JWT using the algorithm for the given `key`.
+///
+/// The following standard claims are supported and checked for type correctness
+/// at compile time:
+///
+/// * `iss`
+/// * `sub`
+/// * `jti`
+/// * `iat`
+/// * `exp`
+/// * `nbf`
+///
+/// Returns an error if `claims` could not be serialized, or if base64 encoding
+/// fails.
+pub fn encode(allocator: Allocator, claims: anytype, key: Key) EncodingError![]u8 {
     comptime meta.validateClaimTypes(@TypeOf(claims)) catch |e| {
         meta.claimCompileError(e);
     };
@@ -113,7 +136,19 @@ pub fn encode(allocator: Allocator, claims: anytype, key: Key) ![]u8 {
     return std.fmt.allocPrint(allocator, "{s}.{s}", .{ message, sig_base64 });
 }
 
-pub fn decode(comptime T: type, allocator: Allocator, token: []const u8, key: Key) !TokenData(T) {
+pub const DecodingError = error{InvalidFormat} || EncodingError || std.json.ParseError(std.json.Scanner);
+
+/// Decodes the given `token` into a claims of type `T`, verifying standard claims
+/// and ensuring that the `token`'s signature matches the signature we generate
+/// with `key`.
+///
+/// Returns a handle that manages the memory of the parsed `T`.
+pub fn decode(
+    comptime T: type,
+    allocator: Allocator,
+    token: []const u8,
+    key: Key,
+) DecodingError!TokenData(T) {
     const header_end = std.mem.indexOfScalar(
         u8,
         token,
