@@ -63,48 +63,80 @@ pub fn claimCompileError(comptime err: ClaimValidationError) noreturn {
     @compileError(message);
 }
 
-pub fn validateClaimTypes(comptime T: type) ClaimValidationError!void {
+pub fn validateClaimTypes(comptime T: type) ClaimValidationError!StandardClaimInfo {
     return comptime blk: {
-        const Claims = @typeInfo(T).@"struct";
+        const info = getStandardClaims(T);
 
-        for (Claims.fields) |field| {
-            if (std.mem.eql(u8, field.name, "iss")) {
-                if (!isZigString(field.type)) {
-                    break :blk error.Iss;
-                }
-            }
-
-            if (std.mem.eql(u8, field.name, "sub")) {
-                if (!isZigString(field.type)) {
-                    break :blk error.Sub;
-                }
-            }
-
-            if (std.mem.eql(u8, field.name, "jti")) {
-                if (!isZigString(field.type)) {
-                    break :blk error.Jti;
-                }
-            }
-
-            if (std.mem.eql(u8, field.name, "iat")) {
-                if (@typeInfo(field.type) != .int) {
-                    break :blk error.Iat;
-                }
-            }
-
-            if (std.mem.eql(u8, field.name, "exp")) {
-                if (@typeInfo(field.type) != .int) {
-                    break :blk error.Exp;
-                }
-            }
-
-            if (std.mem.eql(u8, field.name, "nbf")) {
-                if (@typeInfo(field.type) != .int) {
-                    break :blk error.Nbf;
-                }
-            }
+        if (info.has_iss and !isZigString(@FieldType(T, "iss"))) {
+            break :blk error.Iss;
         }
+
+        if (info.has_sub and !isZigString(@FieldType(T, "sub"))) {
+            break :blk error.Sub;
+        }
+
+        if (info.has_jti and !isZigString(@FieldType(T, "jti"))) {
+            break :blk error.Jti;
+        }
+
+        if (info.has_iat and @typeInfo(@FieldType(T, "iat")) != .int) {
+            break :blk error.Iat;
+        }
+
+        if (info.has_exp and @typeInfo(@FieldType(T, "exp")) != .int) {
+            break :blk error.Exp;
+        }
+
+        if (info.has_nbf and @typeInfo(@FieldType(T, "nbf")) != .int) {
+            break :blk error.Nbf;
+        }
+
+        break :blk info;
     };
+}
+
+pub const StandardClaimInfo = struct {
+    has_iss: bool = false,
+    has_sub: bool = false,
+    has_jti: bool = false,
+    has_iat: bool = false,
+    has_exp: bool = false,
+    has_nbf: bool = false,
+};
+
+fn getStandardClaims(comptime T: type) StandardClaimInfo {
+    return comptime blk: {
+        var info: StandardClaimInfo = .{};
+
+        info.has_iss = @hasField(T, "iss");
+        info.has_sub = @hasField(T, "sub");
+        info.has_jti = @hasField(T, "jti");
+        info.has_iat = @hasField(T, "iat");
+        info.has_exp = @hasField(T, "exp");
+        info.has_nbf = @hasField(T, "nbf");
+
+        break :blk info;
+    };
+}
+
+test "validateClaimTypes accepts claims of correct type" {
+    const iat: i64 = 42;
+    const exp: i64 = 42;
+    const nbf: i64 = 42;
+
+    const claims = .{
+        .iss = "test",
+        .sub = "1",
+        .jti = "3321432",
+        .iat = iat,
+        .exp = exp,
+        .nbf = nbf,
+
+        // non-standard claim
+        .name = "BrainBlasted",
+    };
+
+    _ = try comptime validateClaimTypes(@TypeOf(claims));
 }
 
 test "validateClaimTypes rejects iss of incorrect type" {
@@ -115,28 +147,12 @@ test "validateClaimTypes rejects iss of incorrect type" {
     try std.testing.expectError(error.Iss, comptime validateClaimTypes(@TypeOf(claims)));
 }
 
-test "validateClaimTypes accepts string iss" {
-    const claims = .{
-        .iss = "fooo",
-    };
-
-    try comptime validateClaimTypes(@TypeOf(claims));
-}
-
 test "validateClaimTypes rejects sub of incorrect type" {
     const claims = .{
         .sub = 32,
     };
 
     try std.testing.expectError(error.Sub, comptime validateClaimTypes(@TypeOf(claims)));
-}
-
-test "validateClaimTypes accepts string sub" {
-    const claims = .{
-        .sub = "fooo",
-    };
-
-    try comptime validateClaimTypes(@TypeOf(claims));
 }
 
 test "validateClaimTypes rejects jti of incorrect type" {
@@ -147,29 +163,12 @@ test "validateClaimTypes rejects jti of incorrect type" {
     try std.testing.expectError(error.Jti, comptime validateClaimTypes(@TypeOf(claims)));
 }
 
-test "validateClaimTypes accepts string jti" {
-    const claims = .{
-        .jti = "fooo",
-    };
-
-    try comptime validateClaimTypes(@TypeOf(claims));
-}
-
 test "validateClaimTypes rejects iat of incorrect type" {
     const claims = .{
         .iat = "foo",
     };
 
     try std.testing.expectError(error.Iat, comptime validateClaimTypes(@TypeOf(claims)));
-}
-
-test "validateClaimTypes accepts int iat" {
-    const iat: i64 = 33;
-    const claims = .{
-        .iat = iat,
-    };
-
-    try comptime validateClaimTypes(@TypeOf(claims));
 }
 
 test "validateClaimTypes rejects nbf of incorrect type" {
@@ -180,15 +179,6 @@ test "validateClaimTypes rejects nbf of incorrect type" {
     try std.testing.expectError(error.Nbf, comptime validateClaimTypes(@TypeOf(claims)));
 }
 
-test "validateClaimTypes accepts int nbf" {
-    const nbf: i64 = 33;
-    const claims = .{
-        .nbf = nbf,
-    };
-
-    try comptime validateClaimTypes(@TypeOf(claims));
-}
-
 test "validateClaimTypes rejects exp of incorrect type" {
     const claims = .{
         .exp = "foo",
@@ -197,11 +187,38 @@ test "validateClaimTypes rejects exp of incorrect type" {
     try std.testing.expectError(error.Exp, comptime validateClaimTypes(@TypeOf(claims)));
 }
 
-test "validateClaimTypes accepts int exp" {
-    const exp: i64 = 33;
-    const claims = .{
-        .exp = exp,
+test "getStandardClaims returns claims that are present" {
+    const Claims = struct {
+        iss: []const u8,
+        sub: []const u8,
+        jti: []const u8,
+        iat: i64,
+        exp: i64,
+        nbf: i64,
+
+        // non-standard claim
+        name: []const u8,
     };
 
-    try comptime validateClaimTypes(@TypeOf(claims));
+    const info = comptime getStandardClaims(Claims);
+    try std.testing.expect(info.has_iss);
+    try std.testing.expect(info.has_sub);
+    try std.testing.expect(info.has_jti);
+    try std.testing.expect(info.has_iat);
+    try std.testing.expect(info.has_exp);
+    try std.testing.expect(info.has_nbf);
+}
+
+test "getStandardClaims false when claims aren't present" {
+    const Claims = struct {
+        name: []const u8,
+    };
+
+    const info = comptime getStandardClaims(Claims);
+    try std.testing.expect(!info.has_iss);
+    try std.testing.expect(!info.has_sub);
+    try std.testing.expect(!info.has_jti);
+    try std.testing.expect(!info.has_iat);
+    try std.testing.expect(!info.has_exp);
+    try std.testing.expect(!info.has_nbf);
 }
