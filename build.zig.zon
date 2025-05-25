@@ -1,0 +1,14 @@
+.{
+    .name = .jwt,
+    .version = "0.0.1",
+    // When forking a Zig project, this id should be regenerated (delete the
+    // field and run `zig build`) if the upstream project is still maintained.
+    .fingerprint = 0x8d17cdf0a30a72fd, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.14.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+    },
+}
