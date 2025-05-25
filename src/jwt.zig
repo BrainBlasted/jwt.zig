@@ -136,7 +136,7 @@ pub fn encode(allocator: Allocator, claims: anytype, key: Key) EncodingError![]u
     return std.fmt.allocPrint(allocator, "{s}.{s}", .{ message, sig_base64 });
 }
 
-pub const DecodingError = error{InvalidFormat} || EncodingError || std.json.ParseError(std.json.Scanner);
+pub const DecodingError = error{ InvalidFormat, InvalidSignature } || EncodingError || std.json.ParseError(std.json.Scanner);
 
 /// Decodes the given `token` into a claims of type `T`, verifying standard claims
 /// and ensuring that the `token`'s signature matches the signature we generate
@@ -169,7 +169,13 @@ pub fn decode(
     const header_segment = token[0..header_end];
     const claims_segment = token[header_end + 1 .. signature_start];
     const sig_segment = token[signature_start + 1 ..];
-    _ = sig_segment;
+
+    const token_signature = try base64URLDecode(aa, sig_segment);
+    const our_signature = try signMessage(aa, token[0..signature_start], key);
+
+    if (!std.mem.eql(u8, token_signature, our_signature)) {
+        return error.InvalidSignature;
+    }
 
     const header = try std.json.parseFromSlice(
         Header,
@@ -195,7 +201,6 @@ pub fn decode(
         ),
     };
 
-    _ = key;
     return data;
 }
 
@@ -315,4 +320,23 @@ test "decode: returns token of correct type" {
     try std.testing.expectEqual(claims.iat, data.claims.iat);
     try std.testing.expectEqual(claims.exp, data.claims.exp);
     try std.testing.expectEqualSlices(u8, claims.sub, data.claims.sub);
+}
+
+test "decode: returns error if signature is invalid" {
+    const allocator = std.testing.allocator;
+
+    const Claims = struct {
+        sub: []const u8,
+    };
+
+    const claims = .{ .sub = "foo" };
+
+    const token = try encode(allocator, claims, .{
+        .hs256 = "my-256-bit-token",
+    });
+    defer allocator.free(token);
+
+    try std.testing.expectError(error.InvalidSignature, decode(Claims, allocator, token, .{
+        .hs256 = "hackers-256-bit-token",
+    }));
 }
