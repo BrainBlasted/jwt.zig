@@ -13,12 +13,15 @@ pub const EncodingError = util.EncodingError;
 
 /// The signing key for a JSON Web Token.
 ///
-/// NOTE: Currently only supports the three HMAC signing
-/// algorithms or `none`.
+/// NOTE: Currently only supports the three HMAC signing algorithms or `none`.
 pub const Key = union(enum) {
+    /// For maximum security this should be a signing key at least 256 bits (32 bytes) long.
     hs256: []const u8,
+    /// For maximum security this should be a signing key at least 384 bits (48 bytes) long.
     hs384: []const u8,
+    /// For maximum security this should be a signing key at least 512 bits (64 bytes) long.
     hs512: []const u8,
+    /// **WARNING**: Using tokens without a signature is not recommended.
     none,
 
     fn algString(key: *const Key) []const u8 {
@@ -41,7 +44,9 @@ const Header = struct {
 /// in order to release the memory allocated for the claim.
 pub fn TokenData(comptime T: type) type {
     return struct {
+        /// The decoded claims. Developers may process custom claims with application-specific logic.
         claims: T,
+        /// The arena allocator holding the memory for `claims`. **DO NOT USE DIRECTLY**.
         arena: *std.heap.ArenaAllocator,
 
         const Self = @This();
@@ -67,6 +72,7 @@ pub fn TokenData(comptime T: type) type {
             };
         }
 
+        /// Releases the memory allocated for `claims`.
         pub fn deinit(self: *Self) void {
             const allocator = self.arena.child_allocator;
             self.arena.deinit();
@@ -140,10 +146,10 @@ pub fn encode(allocator: Allocator, claims: anytype, key: Key) EncodingError![]u
 }
 
 pub const ValidationError = error{
-    InvalidFormat,
-    InvalidSignature,
-    Expired,
-    TooEarly,
+    TokenFormatInvalid,
+    TokenSignatureInvalid,
+    TokenExpired,
+    TokenTooEarly,
 };
 
 pub const DecodingError = ValidationError || EncodingError || std.json.ParseError(std.json.Scanner);
@@ -177,7 +183,7 @@ pub fn decode(comptime T: type, allocator: Allocator, token: []const u8, key: Ke
     const our_signature = try signMessage(aa, segments.message, key);
 
     if (!std.mem.eql(u8, token_signature, our_signature)) {
-        return error.InvalidSignature;
+        return error.TokenSignatureInvalid;
     }
 
     const header = try util.base64URLDecode(aa, segments.header);
@@ -190,11 +196,11 @@ pub fn decode(comptime T: type, allocator: Allocator, token: []const u8, key: Ke
     const now = std.time.timestamp();
 
     if (claim_info.has_exp and now > data.claims.exp) {
-        return error.Expired;
+        return error.TokenExpired;
     }
 
     if (claim_info.has_nbf and now < data.claims.nbf) {
-        return error.TooEarly;
+        return error.TokenTooEarly;
     }
 
     return data;
@@ -354,7 +360,7 @@ test "decode: returns error if signature is invalid" {
     });
     defer allocator.free(token);
 
-    try std.testing.expectError(error.InvalidSignature, decode(Claims, allocator, token, .{
+    try std.testing.expectError(error.TokenSignatureInvalid, decode(Claims, allocator, token, .{
         .hs256 = "hackers-256-bit-token",
     }));
 }
@@ -382,7 +388,7 @@ test "decode: returns error if token is expired" {
     });
     defer allocator.free(token);
 
-    try std.testing.expectError(error.Expired, decode(Claims, allocator, token, .{
+    try std.testing.expectError(error.TokenExpired, decode(Claims, allocator, token, .{
         .hs256 = secret,
     }));
 }
@@ -407,7 +413,7 @@ test "decode: returns error if before nbf" {
     });
     defer allocator.free(token);
 
-    try std.testing.expectError(error.TooEarly, decode(Claims, allocator, token, .{
+    try std.testing.expectError(error.TokenTooEarly, decode(Claims, allocator, token, .{
         .hs256 = secret,
     }));
 }

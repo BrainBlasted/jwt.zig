@@ -28,18 +28,18 @@ pub const TokenSegments = struct {
     message: []const u8,
 };
 
-pub fn splitToken(token: []const u8) error{InvalidFormat}!TokenSegments {
+pub fn splitToken(token: []const u8) error{TokenFormatInvalid}!TokenSegments {
     const header_end = std.mem.indexOfScalar(
         u8,
         token,
         '.',
-    ) orelse return error.InvalidFormat;
+    ) orelse return error.TokenFormatInvalid;
     const signature_start = std.mem.indexOfScalarPos(
         u8,
         token,
         header_end + 1,
         '.',
-    ) orelse return error.InvalidFormat;
+    ) orelse return error.TokenFormatInvalid;
 
     return .{
         .header = token[0..header_end],
