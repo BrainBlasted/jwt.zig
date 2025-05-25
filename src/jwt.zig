@@ -148,11 +148,19 @@ pub const ValidationError = error{
 
 pub const DecodingError = ValidationError || EncodingError || std.json.ParseError(std.json.Scanner);
 
-/// Decodes the given `token` into a claims of type `T`, verifying standard claims
+/// Decodes the given `token` into a object of type `T`, verifying standard claims
 /// and ensuring that the `token`'s signature matches the signature we generate
 /// with `key`.
 ///
-/// Returns a handle that manages the memory of the parsed `T`.
+/// Returns a handle that manages the memory of the parsed `T`, or an error if…
+///
+/// * …signature validation fails;
+/// * …standard claims `exp` and `nbf` are present and validation fails;
+/// * …base64url decoding fails;
+/// * …memory allocation fails.
+///
+/// The caller *must* call `deinit()` on the returned item to release the allocated
+/// memory.
 pub fn decode(comptime T: type, allocator: Allocator, token: []const u8, key: Key) DecodingError!TokenData(T) {
     const claim_info = comptime meta.validateClaimTypes(T) catch |e| {
         meta.claimCompileError(e);
