@@ -13,6 +13,6 @@ jobs:
       - name: Zig Setup
         uses: mlugg/setup-zig@v2
       - name: Build and test
-        run: zig build test
+        run: zig build test --summary all
       - name: Generate docs
         run: zig build-lib -femit-docs src/jwt.zig
