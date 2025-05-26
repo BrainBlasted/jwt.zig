@@ -1,3 +1,11 @@
+//! Functions for encoding and decoding JSON Web Tokens ([RFC7519](https://www.rfc-editor.org/rfc/rfc7519)).
+//!
+//! ## References
+//!
+//! * JWT Website ([jwt.io](https://jwt.io/))
+//! * JSON Web Signatures ([RFC7515](https://www.rfc-editor.org/rfc/rfc7515))
+//! * JSON Web Algorithms ([RFC7518](https://www.rfc-editor.org/rfc/rfc7518))
+//! * JSON Web Tokens ([RFC7519](https://www.rfc-editor.org/rfc/rfc7519))
 const std = @import("std");
 
 const meta = @import("meta.zig");
@@ -206,6 +214,41 @@ pub fn decode(comptime T: type, allocator: Allocator, token: []const u8, key: Ke
     return data;
 }
 
+const jwt = @This();
+
+test encode {
+    const allocator = std.testing.allocator;
+
+    const Claims = struct {
+        iat: i64,
+        exp: i64,
+        sub: []const u8,
+        name: []const u8,
+    };
+
+    const now = std.time.timestamp();
+    // We want this token to expire in 15 minutes.
+    const exp = now + (15 * std.time.s_per_min);
+
+    const claims: Claims = .{
+        .iat = now,
+        .exp = exp,
+        .sub = "1",
+        .name = "BrainBlasted",
+    };
+
+    // In a real application, this should not be stored in the source
+    // code and should instead be loaded from the environment (via an
+    // environment variable or some file on the developer's machine).
+    const secret = "your-256-bit-secret";
+    const token = try jwt.encode(allocator, claims, .{
+        .hs256 = secret,
+    });
+    defer allocator.free(token);
+
+    // Store token or send it to the user
+}
+
 test "encode: token contains base64url encoded header with alg" {
     const allocator = std.testing.allocator;
 
@@ -291,13 +334,14 @@ test "encode: token contains empty signature for none alg" {
     try std.testing.expectEqual(0, signature_segment.len);
 }
 
-test "decode: returns token of correct type" {
+test decode {
     const allocator = std.testing.allocator;
 
     const Claims = struct {
         iat: i64,
         exp: i64,
         sub: []const u8,
+        name: []const u8,
     };
 
     const iat = std.time.timestamp();
@@ -307,13 +351,15 @@ test "decode: returns token of correct type" {
         .iat = iat,
         .exp = exp,
         .sub = "1",
+        .name = "BrainBlasted",
     };
 
     const secret = "your-256-bit-secret";
-    const token = try encode(allocator, claims, .{ .hs256 = secret });
+    const token = try jwt.encode(allocator, claims, .{ .hs256 = secret });
     defer allocator.free(token);
 
-    var data = try decode(Claims, allocator, token, .{
+    // A token must be decoded with the same secret and algorithm it was decoded with.
+    var data = try jwt.decode(Claims, allocator, token, .{
         .hs256 = secret,
     });
     defer data.deinit();
@@ -321,6 +367,7 @@ test "decode: returns token of correct type" {
     try std.testing.expectEqual(claims.iat, data.claims.iat);
     try std.testing.expectEqual(claims.exp, data.claims.exp);
     try std.testing.expectEqualSlices(u8, claims.sub, data.claims.sub);
+    try std.testing.expectEqualSlices(u8, claims.name, data.claims.name);
 }
 
 test "decode: returns with non-standard claims" {
