@@ -165,22 +165,27 @@ pub fn TokenData(comptime T: type) type {
     };
 }
 
+fn hmacSign(
+    comptime Method: type,
+    allocator: Allocator,
+    message: []const u8,
+    secret: []const u8,
+) Allocator.Error![]u8 {
+    var digest: [Method.mac_length]u8 = undefined;
+    Method.create(&digest, message, secret);
+    return allocator.dupe(u8, &digest);
+}
+
 fn signMessage(allocator: Allocator, message: []const u8, key: Key) Allocator.Error![]u8 {
     switch (key) {
         .hs256 => |k| {
-            var digest: [HmacSha256.mac_length]u8 = undefined;
-            HmacSha256.create(&digest, message, k);
-            return allocator.dupe(u8, &digest);
+            return hmacSign(HmacSha256, allocator, message, k);
         },
         .hs384 => |k| {
-            var digest: [HmacSha384.mac_length]u8 = undefined;
-            HmacSha384.create(&digest, message, k);
-            return allocator.dupe(u8, &digest);
+            return hmacSign(HmacSha384, allocator, message, k);
         },
         .hs512 => |k| {
-            var digest: [HmacSha512.mac_length]u8 = undefined;
-            HmacSha512.create(&digest, message, k);
-            return allocator.dupe(u8, &digest);
+            return hmacSign(HmacSha512, allocator, message, k);
         },
         .none => return allocator.dupe(u8, ""),
     }
