@@ -2,6 +2,8 @@
 
 Functions for encoding and decoding JSON Web Tokens ([RFC7519](https://www.rfc-editor.org/rfc/rfc7519)).
 
+**Full Documentation**: https://brainblasted.github.io/jwt.zig/
+
 ## Overview
 
 `jwt.zig` provides a simple, flexible, and type-safe implementation of the JSON Web Token
