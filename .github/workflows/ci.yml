@@ -16,3 +16,22 @@ jobs:
         run: zig build test --summary all
       - name: Generate docs
         run: zig build-lib -femit-docs src/jwt.zig
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Docs
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/
+  docs:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
