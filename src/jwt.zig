@@ -142,17 +142,13 @@ pub fn TokenData(comptime T: type) type {
             arena.* = std.heap.ArenaAllocator.init(allocator);
             errdefer arena.deinit();
 
-            const decoded_claims = try util.base64URLDecode(allocator, source);
-            defer allocator.free(decoded_claims);
+            const claims = try std.json.parseFromSliceLeaky(T, arena.allocator(), source, .{
+                .allocate = .alloc_always,
+            });
 
             return .{
                 .arena = arena,
-                .claims = try std.json.parseFromSliceLeaky(
-                    T,
-                    arena.allocator(),
-                    decoded_claims,
-                    .{ .allocate = .alloc_always },
-                ),
+                .claims = claims,
             };
         }
 
@@ -279,7 +275,8 @@ pub fn decode(comptime T: type, allocator: Allocator, token: []const u8, key: Ke
     // We want to ensure that the header isn't malformed, but we don't otherwise need it.
     _ = try std.json.parseFromSliceLeaky(Header, aa, header, .{});
 
-    var data = try TokenData(T).init(allocator, segments.claims);
+    const claims = try util.base64URLDecode(aa, segments.claims);
+    var data = try TokenData(T).init(allocator, claims);
     errdefer data.deinit();
 
     const now = std.time.timestamp();
