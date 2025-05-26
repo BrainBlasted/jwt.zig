@@ -13,12 +13,9 @@ pub fn base64URLEncode(allocator: Allocator, source: []const u8) EncodingError![
 }
 
 pub fn base64URLDecode(allocator: Allocator, base64: []const u8) EncodingError![]u8 {
-    const size = try Base64URL.Decoder.calcSizeForSlice(base64);
-    var decoded = try std.ArrayList(u8).initCapacity(allocator, size);
-    decoded.expandToCapacity();
-
-    try Base64URL.Decoder.decode(decoded.items, base64);
-    return decoded.toOwnedSlice();
+    const decoded = try allocator.alloc(u8, try Base64URL.Decoder.calcSizeForSlice(base64));
+    try Base64URL.Decoder.decode(decoded, base64);
+    return decoded;
 }
 
 pub const TokenSegments = struct {
