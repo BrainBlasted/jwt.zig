@@ -235,9 +235,22 @@ pub const ValidationError = error{
     TokenSignatureInvalid,
     TokenExpired,
     TokenTooEarly,
+    TokenCustomValidatorFailed,
 };
 
 pub const DecodingError = ValidationError || EncodingError || std.json.ParseError(std.json.Scanner);
+
+/// Options for decoding a token.
+pub fn DecodeOpts(comptime T: type) type {
+    return struct {
+        /// A function that the user can use to check their
+        /// custom claims after the standard claims are validated.
+        validator: ?fn (claims: *T) anyerror!void = null,
+        /// The amount of seconds that the current time is allowed
+        /// to deviate from the standard claims `nbf` and `exp`.
+        leeway_seconds: i64 = 60,
+    };
+}
 
 /// Decodes the given `token` into a object of type `T`, verifying standard claims
 /// and ensuring that the `token`'s signature matches the signature we generate
@@ -253,6 +266,21 @@ pub const DecodingError = ValidationError || EncodingError || std.json.ParseErro
 /// The caller *must* call `deinit()` on the returned item to release the allocated
 /// memory.
 pub fn decode(comptime T: type, allocator: Allocator, token: []const u8, key: Key) DecodingError!TokenData(T) {
+    return decodeOpts(T, allocator, token, key, .{});
+}
+
+/// Same as `decode()` but with the ability to provide specific options
+/// such as the leeway for time checks and a custom validation function.
+///
+/// The caller *must* call `deinit()` on the returned item to release the allocated
+/// memory.
+pub fn decodeOpts(
+    comptime T: type,
+    allocator: Allocator,
+    token: []const u8,
+    key: Key,
+    opts: DecodeOpts(T),
+) DecodingError!TokenData(T) {
     const claim_info = comptime meta.validateClaimTypes(T) catch |e| {
         meta.claimCompileError(e);
     };
@@ -281,12 +309,16 @@ pub fn decode(comptime T: type, allocator: Allocator, token: []const u8, key: Ke
 
     const now = std.time.timestamp();
 
-    if (claim_info.has_exp and now > data.claims.exp) {
+    if (claim_info.has_exp and (now - opts.leeway_seconds) > data.claims.exp) {
         return error.TokenExpired;
     }
 
-    if (claim_info.has_nbf and now < data.claims.nbf) {
+    if (claim_info.has_nbf and (now + opts.leeway_seconds) < data.claims.nbf) {
         return error.TokenTooEarly;
+    }
+
+    if (opts.validator) |validator| {
+        validator(&data.claims) catch return error.TokenCustomValidatorFailed;
     }
 
     return data;
@@ -541,4 +573,159 @@ test "decode: returns error if before nbf" {
     try std.testing.expectError(error.TokenTooEarly, decode(Claims, allocator, token, .{
         .hs256 = secret,
     }));
+}
+
+test decodeOpts {
+    const allocator = std.testing.allocator;
+
+    const Claims = struct {
+        nbf: i64,
+        exp: i64,
+        list: []const []const u8,
+    };
+
+    const Validator = struct {
+        fn validate(claims: *Claims) !void {
+            if (claims.list.len == 0) {
+                return error.EmptyList;
+            }
+        }
+    };
+
+    const now = std.time.timestamp();
+    // This is in the past;
+    const exp = now - 10;
+    // and this is in the future...
+    const nbf = now + 10;
+
+    const claims: Claims = .{
+        .nbf = nbf,
+        .exp = exp,
+        .list = &.{ "Foo", "Bar" },
+    };
+
+    const secret = "my-256-bit-secret";
+    const token = try jwt.encode(allocator, claims, .{
+        .hs256 = secret,
+    });
+    defer allocator.free(token);
+
+    var data = try jwt.decodeOpts(
+        Claims,
+        allocator,
+        token,
+        .{ .hs256 = secret },
+        .{
+            .validator = Validator.validate,
+            // ...but since we give decoding a leeway of 120 seconds,
+            // the token will pass validation.
+            .leeway_seconds = 120,
+        },
+    );
+    defer data.deinit();
+
+    try std.testing.expectEqual(claims.exp, data.claims.exp);
+    try std.testing.expectEqual(claims.nbf, data.claims.nbf);
+
+    try std.testing.expectEqual(claims.list.len, data.claims.list.len);
+    try std.testing.expectEqualStrings(claims.list[0], data.claims.list[0]);
+    try std.testing.expectEqualStrings(claims.list[1], data.claims.list[1]);
+}
+
+test "decodeOpts: returns error if custom validator failed" {
+    const allocator = std.testing.allocator;
+
+    const Claims = struct {
+        list: []const []const u8,
+    };
+
+    const Validator = struct {
+        fn validate(claims: *Claims) !void {
+            if (claims.list.len == 0) {
+                return error.EmptyList;
+            }
+        }
+    };
+
+    const claims: Claims = .{
+        .list = &.{},
+    };
+
+    const secret = "my-256-bit-secret";
+    const token = try encode(allocator, claims, .{
+        .hs256 = secret,
+    });
+    defer allocator.free(token);
+
+    try std.testing.expectError(error.TokenCustomValidatorFailed, decodeOpts(
+        Claims,
+        allocator,
+        token,
+        .{ .hs256 = secret },
+        .{ .validator = Validator.validate },
+    ));
+}
+
+test "decodeOpts: returns token if exp within leeway" {
+    const allocator = std.testing.allocator;
+
+    const Claims = struct {
+        exp: i64,
+    };
+
+    const now = std.time.timestamp();
+    const exp = now - 15;
+
+    const claims: Claims = .{
+        .exp = exp,
+    };
+
+    const secret = "my-256-bit-secret";
+    const token = try encode(allocator, claims, .{
+        .hs256 = secret,
+    });
+    defer allocator.free(token);
+
+    var data = try decodeOpts(
+        Claims,
+        allocator,
+        token,
+        .{ .hs256 = secret },
+        .{ .leeway_seconds = 120 },
+    );
+    defer data.deinit();
+
+    try std.testing.expectEqual(claims.exp, data.claims.exp);
+}
+
+test "decodeOpts: returns token if nbf within leeway" {
+    const allocator = std.testing.allocator;
+
+    const Claims = struct {
+        nbf: i64,
+    };
+
+    const now = std.time.timestamp();
+    const nbf = now + 15;
+
+    const claims: Claims = .{
+        .nbf = nbf,
+    };
+
+    const secret = "my-256-bit-secret";
+    const token = try encode(allocator, claims, .{
+        .hs256 = secret,
+    });
+    defer allocator.free(token);
+
+    var data = try decodeOpts(
+        Claims,
+        allocator,
+        token,
+        .{ .hs256 = secret },
+        .{ .leeway_seconds = 120 },
+    );
+    defer data.deinit();
+
+    try std.testing.expectEqual(claims.nbf, data.claims.nbf);
 }
