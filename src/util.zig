@@ -7,9 +7,9 @@ const Base64URL = std.base64.url_safe_no_pad;
 pub const EncodingError = std.base64.Error || Allocator.Error;
 
 pub fn base64URLEncode(allocator: Allocator, source: []const u8) EncodingError![]u8 {
-    var base64 = std.ArrayList(u8).init(allocator);
-    try Base64URL.Encoder.encodeWriter(base64.writer(), source);
-    return base64.toOwnedSlice();
+    const base64 = try allocator.alloc(u8, Base64URL.Encoder.calcSize(source.len));
+    _ = Base64URL.Encoder.encode(base64, source);
+    return base64;
 }
 
 pub fn base64URLDecode(allocator: Allocator, base64: []const u8) EncodingError![]u8 {
